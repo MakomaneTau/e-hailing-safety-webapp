@@ -15,10 +15,14 @@ node_modules/
 
 # next.js
 **/.next/
+**/.open-next/
+**/.wrangler/
 /out/
 
 # production
 /build
+**/dist/
+/.pnpm-store/
 
 # misc
 .DS_Store
@@ -39,3 +43,4 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 **/next-env.d.ts
+**/cloudflare-env.d.ts

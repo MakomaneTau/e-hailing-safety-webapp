@@ -83,6 +83,24 @@ app.use(
   },
 );
 
-app.listen(port, "0.0.0.0", () => {
+const server = app.listen(port, "0.0.0.0", () => {
   console.log(`API listening on port ${port}`);
 });
+
+async function shutdown(signal: string) {
+  console.log(`${signal} received; shutting down`);
+
+  server.close(async (error) => {
+    await database.end();
+
+    if (error) {
+      console.error(error);
+      process.exit(1);
+    }
+
+    process.exit(0);
+  });
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
