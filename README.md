@@ -6,8 +6,14 @@ Express API foundation, shared TypeScript contracts, and deployment configuratio
 for Cloudflare and Render.
 
 > The application is under active development. The pages and report form are
-> available, but the report submission, authentication, file upload, and report
-> management workflows are not yet connected to backend endpoints.
+> available, and the email/password signup and login forms are connected to the
+> API. Frontend route protection, logout UI, report submission, file upload, and
+> report management are not yet complete.
+
+New to the repository? Follow the
+[Beginner's Complete Setup Guide](LEARNER_SETUP_GUIDE.md) for an explanation of
+the monorepo, PostgreSQL migration, API setup, frontend connection, and session
+flow.
 
 ## Architecture
 
@@ -73,7 +79,7 @@ Netlify is no longer used by this project.
 
 | Route | Purpose |
 | --- | --- |
-| `/` | Landing page |
+| `/` | Login interface |
 | `/login` | Login interface |
 | `/signup` | Registration interface |
 | `/dashboard` | User dashboard |
@@ -87,6 +93,11 @@ The API currently exposes:
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/health` | Verify the API and database connection |
+| `POST` | `/api/auth/signup` | Create a user and session |
+| `POST` | `/api/auth/login` | Sign in and create a session |
+| `GET` | `/api/auth/me` | Return the authenticated user |
+| `POST` | `/api/auth/logout` | Delete the current session |
+| `POST` | `/api/auth/logout-all` | Delete all sessions for the user |
 
 ## Prerequisites
 
@@ -116,6 +127,12 @@ Create the database with pgAdmin or `psql`:
 CREATE DATABASE e_hailing_safety;
 ```
 
+Apply the authentication migration once from the repository root:
+
+```powershell
+psql -U postgres -d e_hailing_safety -f apps/api/src/database/migrations/01_create_auth_tables.sql
+```
+
 Copy the API environment template:
 
 ```powershell
@@ -125,10 +142,12 @@ Copy-Item apps\api\.env.example apps\api\.env
 Update `apps/api/.env` with your PostgreSQL credentials:
 
 ```env
-DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/e_hailing_safety
+DATABASE_URL=postgresql://postgres:YOUR_URL_ENCODED_PASSWORD@localhost:5432/e_hailing_safety
 FRONTEND_URL=http://localhost:3000
 NODE_ENV=development
 PORT=5000
+SESSION_TTL_DAYS=7
+COOKIE_SAME_SITE=lax
 ```
 
 Characters with special meaning in a URL must be URL-encoded when they appear
@@ -249,6 +268,8 @@ https://<render-api-host>/api/health
 | `FRONTEND_URL` | API | Yes | Exact frontend origin permitted by CORS |
 | `NODE_ENV` | API | Yes | Selects development or production behavior |
 | `PORT` | API | No | HTTP port; defaults to `5000` locally and is supplied by Render |
+| `SESSION_TTL_DAYS` | API | No | Session lifetime; defaults to 7 and may not exceed 30 days |
+| `COOKIE_SAME_SITE` | API | No | Cookie mode; use `lax` locally and `none` for default cross-site Cloudflare/Render domains |
 
 ## Security notes
 
@@ -258,17 +279,19 @@ https://<render-api-host>/api/health
 - Do not send sensitive report evidence directly to PostgreSQL. A future file
   upload implementation should use dedicated object storage and short-lived
   upload permissions.
-- Authentication, authorization, validation, rate limiting, and audit logging
-  must be completed before accepting real incident reports.
+- Frontend route protection, complete authorization, report validation, audit
+  logging, and the remaining production controls must be completed before
+  accepting real incident reports.
 
 ## Planned work
 
-- Add user authentication and authorization.
+- Connect current-user checks and logout to the UI and protect private routes.
+- Apply role-based authorization to protected API routes.
 - Add report creation, listing, status, and ownership endpoints.
-- Add PostgreSQL migrations and production tables.
+- Add an automated migration runner and the remaining production tables.
 - Connect the frontend report form and dashboards to the API.
 - Store evidence files in object storage.
-- Add automated tests, validation, rate limiting, monitoring, and audit logs.
+- Add automated tests, report validation, monitoring, and audit logs.
 
 ## License
 

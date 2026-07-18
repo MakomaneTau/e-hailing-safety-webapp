@@ -1,3 +1,8 @@
+"use client";
+
+import { useState, type FormEvent } from "react";
+import { login } from "../lib/auth/api";
+
 import {
   FaFacebook,
   FaGoogle,
@@ -7,6 +12,30 @@ import {
 import { MdLockOutline } from "react-icons/md";
 
 export default function Login() {
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setIsSubmitting(true);
+
+    const formData = new FormData(event.currentTarget);
+
+    try {
+      await login({
+        email: String(formData.get("email") ?? ""),
+        password: String(formData.get("password") ?? ""),
+      });
+
+      window.location.href = "/dashboard";
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to sign in");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <main className="flex flex-1 items-center justify-center w-full px-20 text-center">
       <div className="bg-white rounded-2xl shadow-2xl flex items-center justify-center w-2/3 max-w-4xl p-8">
@@ -44,7 +73,10 @@ export default function Login() {
 
             <p className="mb-5">or use your email and password</p>
 
-            <div className="flex flex-col items-center">
+            <form
+              onSubmit={handleSubmit}
+              className="flex flex-col items-center"
+            >
               <div className="bg-gray-100 w-64 p-2 flex items-center mb-3">
                 <FaRegEnvelope className="text-gray-400 m-2" />
                 <input
@@ -73,13 +105,20 @@ export default function Login() {
                 </a>
               </div>
 
-              <a
-                href="#"
-                className="border-2 border-blue-400 text-blue-400 rounded-full px-12 py-2 inline-block font-semibold hover:bg-blue-400 hover:text-white"
+              {error && (
+                <p className="mb-3 text-sm text-red-600" role="alert">
+                  {error}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="border-2 border-blue-400 text-blue-400 rounded-full px-12 py-2 inline-block font-semibold hover:bg-blue-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Sign in
-              </a>
-            </div>
+                {isSubmitting ? "Signing in..." : "Sign in"}
+              </button>
+            </form>
           </div>
         </div>{" "}
         {/* Sign in Section */}
@@ -91,7 +130,7 @@ export default function Login() {
           </p>
 
           <a
-            href="#"
+            href="/signup"
             className="border-2 border-white rounded-full px-12 py-2 inline-block font-semibold hover:bg-white hover:text-blue-400"
           >
             Sign up

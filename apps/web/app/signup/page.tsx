@@ -1,3 +1,8 @@
+"use client";
+
+import { useState, type FormEvent } from "react";
+import { signup } from "../lib/auth/api";
+
 import { CiUser } from "react-icons/ci";
 import {
   FaFacebook,
@@ -8,6 +13,42 @@ import {
 import { MdLockOutline } from "react-icons/md";
 
 export default function Signup() {
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+
+    const formData = new FormData(event.currentTarget);
+
+    const password = String(formData.get("password") ?? "");
+    const confirmPassword = String(formData.get("confirmPassword") ?? "");
+
+    if (password !== confirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      await signup({
+        name: String(formData.get("name") ?? ""),
+        email: String(formData.get("email") ?? ""),
+        password,
+      });
+
+      window.location.href = "/dashboard";
+    } catch (error) {
+      setError(
+        error instanceof Error ? error.message : "Unable to create account",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <main className="flex flex-1 items-center justify-center w-full px-20 text-center">
       <div className="bg-white rounded-2xl shadow-2xl flex items-center justify-center w-2/3 max-w-4xl p-8">
@@ -48,7 +89,10 @@ export default function Signup() {
               Please fill in this form to create an account!
             </p>
 
-            <div className="flex flex-col items-center">
+            <form
+              onSubmit={handleSubmit}
+              className="flex flex-col items-center"
+            >
               <div className="bg-gray-100 w-64 p-2 flex items-center mb-3">
                 <CiUser className="text-gray-400 m-2" />
                 <input
@@ -95,13 +139,20 @@ export default function Signup() {
                 </a>
               </div>
 
-              <a
-                href="#"
-                className="border-2 border-blue-400 text-blue-400 rounded-full px-12 py-2 inline-block font-semibold hover:bg-blue-400 hover:text-white"
+              {error && (
+                <p className="mb-3 text-sm text-red-600" role="alert">
+                  {error}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="border-2 border-blue-400 text-blue-400 rounded-full px-12 py-2 inline-block font-semibold hover:bg-blue-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Create Account
-              </a>
-            </div>
+                {isSubmitting ? "Creating account..." : "Create Account"}
+              </button>
+            </form>
           </div>
         </div>
       </div>

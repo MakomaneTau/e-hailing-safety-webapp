@@ -1,106 +1,37 @@
 import "dotenv/config";
 
-import cors from "cors";
-import express from "express";
-import helmet from "helmet";
-import { Pool } from "pg";
+import { app } from "./app";
+import { env } from "./config/env";
+import { database } from "./database/pool";
 
-import type {
-  ApiResponse,
-  HealthResponse,
-} from "@project/shared";
+async function start(): Promise<void> {
+  await database.query("SELECT 1");
 
-const app = express();
+  const server = app.listen(env.PORT, "0.0.0.0", () => {
+    console.log(`API listening on port ${env.PORT}`);
+  });
 
-const port = Number(process.env.PORT ?? 5000);
+  async function shutdown(signal: string): Promise<void> {
+    console.log(`${signal} received; shutting down`);
 
-const allowedOrigins = [
-  "http://localhost:3000",
-  process.env.FRONTEND_URL,
-].filter((origin): origin is string => Boolean(origin));
+    server.close(async (error) => {
+      await database.end();
 
-app.use(helmet());
-app.use(express.json());
-
-app.use(
-  cors({
-    origin(origin, callback) {
-      // Allows server-to-server requests and tools such as Postman.
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-        return;
+      if (error) {
+        console.error(error);
+        process.exit(1);
       }
 
-      callback(new Error(`CORS rejected origin: ${origin}`));
-    },
-    credentials: true,
-  }),
-);
+      process.exit(0);
+    });
+  }
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL is not configured");
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 }
 
-const database = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl:
-    process.env.NODE_ENV === "production"
-      ? { rejectUnauthorized: false }
-      : undefined,
-  max: 5,
+start().catch(async (error) => {
+  console.error("API failed to start", error);
+  await database.end();
+  process.exit(1);
 });
-
-app.get(
-  "/api/health",
-  async (_request, response) => {
-    await database.query("SELECT 1");
-
-    const result: ApiResponse<HealthResponse> = {
-      success: true,
-      data: {
-        status: "ok",
-        timestamp: new Date().toISOString(),
-      },
-    };
-
-    response.status(200).json(result);
-  },
-);
-
-app.use(
-  (
-    error: unknown,
-    _request: express.Request,
-    response: express.Response,
-    _next: express.NextFunction,
-  ) => {
-    console.error(error);
-
-    response.status(500).json({
-      success: false,
-      message: "An internal server error occurred",
-    } satisfies ApiResponse<never>);
-  },
-);
-
-const server = app.listen(port, "0.0.0.0", () => {
-  console.log(`API listening on port ${port}`);
-});
-
-async function shutdown(signal: string) {
-  console.log(`${signal} received; shutting down`);
-
-  server.close(async (error) => {
-    await database.end();
-
-    if (error) {
-      console.error(error);
-      process.exit(1);
-    }
-
-    process.exit(0);
-  });
-}
-
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
-process.on("SIGINT", () => void shutdown("SIGINT"));
