@@ -13,6 +13,11 @@ import {
   logout,
   logoutAll,
   signup,
+  createPkcePair,
+  buildGoogleAuthorizeUrl,
+  exchangeGoogleCode,
+  fetchGoogleProfile,
+  finishGoogleLogin,
 } from "./auth.service";
 import {
   getClearCookieOptions,
@@ -113,4 +118,68 @@ export async function meController(
     success: true,
     data: user,
   });
+}
+
+export async function googleStartController(
+  _request: Request,
+  response: Response,
+): Promise<void> {
+  const { state, challenge, verifier } = createPkcePair();
+
+  response.cookie("oauth_state", state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 10 * 60 * 1000,
+  });
+
+  response.cookie("oauth_verifier", verifier, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 10 * 60 * 1000,
+  });
+
+  const authorizeUrl = buildGoogleAuthorizeUrl(state, challenge);
+
+  response.redirect(authorizeUrl);
+}
+
+export async function googleCallbackController(
+  request: Request,
+  response: Response,
+): Promise<void> {
+  const { code, state } = request.query;
+
+  const storedState = request.cookies?.oauth_state;
+  const storedVerifier = request.cookies?.oauth_verifier;
+
+  if (!code || typeof code !== "string") {
+    throw new ApiError(400, "Missing authorization code");
+  }
+
+  if (!state || typeof state !== "string" || state !== storedState) {
+    throw new ApiError(400, "Invalid state parameter");
+  }
+
+  if (!storedVerifier || typeof storedVerifier !== "string") {
+    throw new ApiError(400, "PKCE verifier not found");
+  }
+
+  const tokenResponse = await exchangeGoogleCode(code, storedVerifier);
+  const profile = await fetchGoogleProfile(tokenResponse.access_token);
+
+  const result = await finishGoogleLogin(profile);
+
+  response.clearCookie("oauth_state");
+  response.clearCookie("oauth_verifier");
+
+  response.cookie(
+    sessionCookieName,
+    result.sessionToken,
+    getSessionCookieOptions(),
+  );
+
+  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+  response.redirect(`${frontendUrl}/dashboard`);
 }

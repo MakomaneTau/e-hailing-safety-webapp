@@ -72,8 +72,9 @@ export default function Signup() {
                 <FaFacebook className="text-sm" />
               </a>
               <a
-                href="#"
+                href={`${process.env.NEXT_PUBLIC_API_URL}/api/auth/oauth/google/start`}
                 className="border-2 border-gray-200 rounded-full p-3 mx-1 hover:bg-blue-400 hover:text-white"
+                title="Sign up with Google"
               >
                 <FaGoogle className="text-sm" />
               </a>

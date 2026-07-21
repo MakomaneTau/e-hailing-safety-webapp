@@ -6,8 +6,9 @@ how to prepare PostgreSQL, how to run the Express API, and how the Next.js
 frontend talks to the API.
 
 The guide describes the repository state that includes the authentication
-foundation. Make sure you are using the branch or commit that contains this
-guide and the files under `apps/api/src/modules/auth/`.
+foundation and Google OAuth sign-in. Make sure you are using the branch or
+commit that contains this guide and the files under
+`apps/api/src/modules/auth/`.
 
 ## 1. What you will run
 
@@ -39,7 +40,7 @@ During local development, each service has a different address:
 | --- | --- | --- |
 | Next.js frontend | `http://localhost:3000` | Pages the learner opens in a browser |
 | Express API | `http://localhost:5000` | Health and authentication endpoints |
-| PostgreSQL | `localhost:5432` | Stores users and sessions |
+| PostgreSQL | `localhost:5432` | Stores users, sessions, and OAuth accounts |
 
 These ports are not interchangeable. Port 3000 serves the interface, port
 5000 serves HTTP API requests, and port 5432 is only for PostgreSQL clients.
@@ -51,15 +52,20 @@ These ports are not interchangeable. Port 3000 serves the interface, port
   sessions.
 - The API sends the browser an HttpOnly session cookie.
 - Health, signup, login, current-user, logout, and logout-all endpoints exist.
+- "Sign in with Google" is wired up end to end: the login and signup pages
+  link to the API's OAuth start route, and the API completes the exchange
+  and creates a session. See Section 6a.
 
 The authentication foundation is not yet a complete product:
 
 - Dashboard and profile pages are not protected by an authentication guard.
-- The current-user and logout client helpers exist but are not connected to the
-  visible navigation.
-- Report submission, file upload, report management, social login,
-  forgot-password, email verification, and the remember-me option are not
-  implemented.
+- The current-user and logout client helpers exist but are not connected to
+  the visible navigation.
+- Report submission, file upload, report management, forgot-password, and
+  email verification are not implemented.
+- Google accounts are created with an `emailVerified: true` API response,
+  but this is not currently persisted to the `users.email_verified` column
+  — see the note in Section 6a.
 - There is no automated migration runner or automated test suite yet.
 
 ## 2. Understand the monorepo
@@ -75,16 +81,18 @@ e-hailing-safety-webapp/
 |   |   |-- src/
 |   |   |   |-- config/              Environment and CORS configuration
 |   |   |   |-- database/            PostgreSQL pool and SQL migrations
+|   |   |   |   |-- 01_create_auth_tables.sql
+|   |   |   |   `-- 02_create_oauth_accounts.sql   (Google OAuth accounts)
 |   |   |   |-- middleware/          Validation, auth, and error handling
-|   |   |   |-- modules/auth/        Authentication feature
+|   |   |   |-- modules/auth/        Authentication feature (incl. Google OAuth)
 |   |   |   |-- app.ts               Express middleware and routes
 |   |   |   `-- server.ts            Process startup and shutdown
 |   |   `-- package.json
 |   `-- web/                         Next.js frontend
 |       |-- app/
 |       |   |-- lib/auth/api.ts      Browser authentication client
-|       |   |-- login/page.tsx       Connected login form
-|       |   `-- signup/page.tsx      Connected signup form
+|       |   |-- login/page.tsx       Connected login form (+ Google button)
+|       |   `-- signup/page.tsx      Connected signup form (+ Google button)
 |       `-- package.json
 |-- packages/
 |   `-- shared/                      Shared TypeScript contracts
@@ -94,6 +102,15 @@ e-hailing-safety-webapp/
 |-- render.yaml                       Render API and database Blueprint
 `-- DEPLOYMENT.md                    Production deployment reference
 ```
+
+> **Duplicate migration file warning**: this branch's diff introduced two
+> migration files with identical contents:
+> `apps/api/src/database/migrations/02_create_oauth_account.sql` (singular)
+> and `02_create_oauth_accounts.sql` (plural). Only the plural file is
+> referenced in this guide, matching the naming convention of
+> `01_create_auth_tables.sql`. Delete the singular file before running
+> migrations so you don't accidentally apply the same `CREATE TABLE`
+> twice from two different files.
 
 The root `pnpm-workspace.yaml` includes:
 
@@ -122,10 +139,10 @@ Follow these monorepo rules:
 3. Do not create separate lockfiles inside `apps/api` or `apps/web`.
 4. Add a package to one workspace with a filter, for example:
 
-   ```powershell
+```powershell
    pnpm.cmd --filter api add <package-name>
    pnpm.cmd --filter web add <package-name>
-   ```
+```
 
 ## 3. Install the prerequisites
 
@@ -186,7 +203,9 @@ inside either app.
 ## 5. Create and prepare PostgreSQL
 
 The API will not start until it can connect to PostgreSQL. Creating the
-database and applying the migration are separate steps.
+database and applying the migrations are separate steps. There are now two
+migrations to apply, in order: the authentication foundation, then the
+Google OAuth accounts table.
 
 ### Option A: use psql
 
@@ -204,20 +223,29 @@ Then apply the authentication migration:
 psql -h localhost -U postgres -W -d e_hailing_safety -f .\apps\api\src\database\migrations\01_create_auth_tables.sql
 ```
 
-The equivalent Bash command uses forward slashes:
+Then apply the OAuth accounts migration:
+
+```powershell
+psql -h localhost -U postgres -W -d e_hailing_safety -f .\apps\api\src\database\migrations\02_create_oauth_accounts.sql
+```
+
+The equivalent Bash commands use forward slashes:
 
 ```bash
 psql -h localhost -U postgres -W -d e_hailing_safety \
   -f apps/api/src/database/migrations/01_create_auth_tables.sql
+
+psql -h localhost -U postgres -W -d e_hailing_safety \
+  -f apps/api/src/database/migrations/02_create_oauth_accounts.sql
 ```
 
-Confirm that the two tables exist:
+Confirm that the tables exist:
 
 ```powershell
 psql -h localhost -U postgres -W -d e_hailing_safety -c "\dt"
 ```
 
-You should see `users` and `sessions`.
+You should see `users`, `sessions`, and `oauth_accounts`.
 
 ### Option B: use pgAdmin
 
@@ -226,14 +254,17 @@ You should see `users` and `sessions`.
    `e_hailing_safety`.
 3. Select the new database and open `Query Tool`.
 4. Open
-   `apps/api/src/database/migrations/01_create_auth_tables.sql`.
-5. Run the complete script and confirm that it finishes successfully.
-6. Refresh `Schemas > public > Tables`; `users` and `sessions`
-   should appear.
+   `apps/api/src/database/migrations/01_create_auth_tables.sql`,
+   run the complete script, and confirm that it finishes successfully.
+5. Open `Query Tool` again (or clear it) and open
+   `apps/api/src/database/migrations/02_create_oauth_accounts.sql`,
+   run it, and confirm that it finishes successfully.
+6. Refresh `Schemas > public > Tables`; `users`, `sessions`, and
+   `oauth_accounts` should appear.
 
-The current SQL file is a one-time migration, not an idempotent script. Do not
-run it again after it succeeds, because PostgreSQL will report that the tables
-already exist.
+Both SQL files are one-time migrations, not idempotent scripts. Do not run
+either one again after it succeeds, because PostgreSQL will report that the
+tables already exist.
 
 ## 6. Configure local environment files
 
@@ -263,6 +294,10 @@ NODE_ENV=development
 PORT=5000
 SESSION_TTL_DAYS=7
 COOKIE_SAME_SITE=lax
+# Google OAuth Configuration (optional, see Section 6a)
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:5000/api/auth/oauth/google/callback
 ```
 
 Replace `YOUR_URL_ENCODED_PASSWORD` with the password for your local
@@ -287,6 +322,9 @@ API variable meanings:
 | `PORT` | `5000` | API HTTP port |
 | `SESSION_TTL_DAYS` | `7` | Cookie and session lifetime; maximum 30 |
 | `COOKIE_SAME_SITE` | `lax` | Appropriate for local same-site development |
+| `GOOGLE_CLIENT_ID` | From Google Cloud Console | OAuth client identifier; optional, see 6a |
+| `GOOGLE_CLIENT_SECRET` | From Google Cloud Console | OAuth client secret; optional, see 6a |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:5000/api/auth/oauth/google/callback` | Must match the redirect URI registered with Google exactly |
 
 ### Frontend environment
 
@@ -311,7 +349,7 @@ NEXT_PUBLIC_API_URL=http://localhost:5000
 `NEXT_PUBLIC_` means the value is intentionally visible to browser
 JavaScript. It must contain only the public API origin, never a password or
 secret. Do not add a trailing slash because the client appends paths such as
-`/api/auth/login`.
+`/api/auth/login` and `/api/auth/oauth/google/start`.
 
 Keep `localhost` consistent. For example, opening the frontend through
 `http://127.0.0.1:3000` will not match a
@@ -319,6 +357,83 @@ Keep `localhost` consistent. For example, opening the frontend through
 
 Restart the Next.js development server whenever
 `NEXT_PUBLIC_API_URL` changes.
+
+## 6a. Configure Google OAuth (optional)
+
+This branch adds a "Sign in with Google" option using the authorization
+code flow with PKCE. It is optional for local development — the app still
+works with email/password only if you skip this section.
+
+### Get Google OAuth credentials
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), create
+   or select a project.
+2. Go to **APIs & Services > Credentials** and create an **OAuth 2.0 Client
+   ID** of type **Web application**.
+3. Add an authorized redirect URI matching your local API:
+
+```text
+   http://localhost:5000/api/auth/oauth/google/callback
+```
+
+4. Copy the generated **Client ID** and **Client Secret**.
+
+### Add the values to `apps/api/.env`
+
+Paste your real Client ID and Client Secret over the placeholders shown in
+Section 6:
+
+```dotenv
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:5000/api/auth/oauth/google/callback
+```
+
+Leave `GOOGLE_REDIRECT_URI` as shown for local development — it must
+exactly match the redirect URI registered in the Google Cloud Console,
+including protocol, host, port, and path.
+
+> **Note on required-but-optional values**: `env.ts` marks these three
+> variables as optional so the app can still start without Google OAuth
+> configured. However, the OAuth code paths read them with a non-null
+> assertion (`process.env.GOOGLE_CLIENT_ID!` and similar), so leaving them
+> unset does not produce a clear startup error. Instead, you'll get a
+> runtime failure or a broken redirect only once the OAuth flow actually
+> runs. If Google sign-in isn't working, check that all three variables
+> are set in `apps/api/.env` before looking elsewhere.
+
+### How the flow works
+
+1. The browser opens `/api/auth/oauth/google/start`.
+2. The API generates a PKCE verifier/challenge pair and a random `state`
+   value, stores `state` and the verifier in short-lived HttpOnly cookies,
+   and redirects the browser to Google's authorization page.
+3. After the user signs in and consents, Google redirects back to
+   `/api/auth/oauth/google/callback` with a `code` and the original
+   `state`.
+4. The API checks that `state` matches the cookie value, exchanges the
+   code (with the PKCE verifier) for an access token, fetches the Google
+   profile, creates or reuses a local user, creates a session, sets the
+   normal session cookie, and redirects to `/dashboard`.
+
+### Known gap in this branch
+
+`finishGoogleLogin` creates a new local user record if no existing user
+matches the Google account's email, using a random password hash as a
+placeholder (there's no password to store for an OAuth-only account). The
+API response marks that user as `emailVerified: true`, but this status is
+not currently persisted back to the `users` table — the repository-layer
+update is left as a comment rather than implemented. Don't rely on the
+database `email_verified` column being accurate for Google-created
+accounts yet.
+
+### Test it
+
+1. Start both terminals as described in Section 7.
+2. Open `http://localhost:3000/login` or `http://localhost:3000/signup`.
+3. Select the Google icon.
+4. Confirm you're redirected to Google, then back to `/dashboard` with a
+   session cookie set (same verification steps as Section 8).
 
 ## 7. Start the application
 
@@ -374,7 +489,7 @@ A successful response has this shape:
 ```
 
 This endpoint checks the database connection, but it does not check whether the
-authentication migration was applied. A health response can succeed while
+authentication migrations were applied. A health response can succeed while
 signup still fails with `relation "users" does not exist`.
 
 The API has no route at `/`. A 404 response there is expected; use
@@ -424,6 +539,7 @@ You can inspect the created rows without displaying password hashes:
 ```powershell
 psql -h localhost -U postgres -W -d e_hailing_safety -c "SELECT id, name, email, role, email_verified, created_at FROM users;"
 psql -h localhost -U postgres -W -d e_hailing_safety -c "SELECT id, user_id, expires_at, last_used_at FROM sessions;"
+psql -h localhost -U postgres -W -d e_hailing_safety -c "SELECT id, user_id, provider, email, created_at FROM oauth_accounts;"
 ```
 
 ### Optional PowerShell API test
@@ -488,17 +604,20 @@ signup/page.tsx
   -> browser navigates to /dashboard
 ```
 
+The Google sign-in button follows a separate, redirect-based sequence
+instead of a fetch call — see Section 6a for the full flow.
+
 The important connection points are:
 
 | File | Responsibility |
 | --- | --- |
 | `apps/web/.env.local` | Gives browser code the API origin |
 | `apps/web/app/lib/auth/api.ts` | Builds requests, sends JSON, includes cookies, and handles API errors |
-| `apps/web/app/login/page.tsx` | Calls the login client helper |
-| `apps/web/app/signup/page.tsx` | Calls the signup client helper |
+| `apps/web/app/login/page.tsx` | Calls the login client helper; links to Google OAuth start |
+| `apps/web/app/signup/page.tsx` | Calls the signup client helper; links to Google OAuth start |
 | `apps/api/src/config/cors.ts` | Allows credentialed browser requests from the exact frontend origin |
 | `apps/api/src/middleware/validate-origin.ts` | Rejects unsafe requests from another origin |
-| `apps/api/src/modules/auth/` | Implements auth routes, validation, services, and SQL access |
+| `apps/api/src/modules/auth/` | Implements auth routes, validation, services, SQL access, and Google OAuth |
 | `apps/api/src/modules/auth/session.ts` | Generates, hashes, and configures session cookies |
 
 The frontend uses `credentials: "include"` on every auth request. Without
@@ -520,6 +639,8 @@ attach it automatically to allowed requests.
 | `GET` | `/api/auth/me` | Session cookie | Returns the current public user |
 | `POST` | `/api/auth/logout` | Session cookie | Deletes the current session; returns 204 |
 | `POST` | `/api/auth/logout-all` | Session cookie | Deletes all sessions for the user; returns 204 |
+| `GET` | `/api/auth/oauth/google/start` | No | Redirects the browser to Google's consent screen |
+| `GET` | `/api/auth/oauth/google/callback` | No | Exchanges the code, creates/reuses a user and session, redirects to `/dashboard` |
 
 Signup validation rules:
 
@@ -573,8 +694,8 @@ create and reuse a session. Production uses a split deployment:
 Read [DEPLOYMENT.md](DEPLOYMENT.md) for the platform-specific controls. The
 important order and auth-specific additions are:
 
-1. Commit and push the full branch, including the auth source, migration,
-   environment examples, and this guide.
+1. Commit and push the full branch, including the auth source, both
+   migrations, environment examples, and this guide.
 2. Create the Render Blueprint from the repository root. It builds the
    `api` workspace and injects the Render database connection into
    `DATABASE_URL`.
@@ -583,9 +704,9 @@ important order and auth-specific additions are:
 4. Create the Cloudflare Workers Builds project from the repository root and
    set its build-time variable:
 
-   ```dotenv
+```dotenv
    NEXT_PUBLIC_API_URL=https://<api-service>.onrender.com
-   ```
+```
 
 5. Deploy the frontend and copy its exact HTTPS origin.
 6. In Render, set `FRONTEND_URL` to that exact Cloudflare origin without
@@ -593,20 +714,26 @@ important order and auth-specific additions are:
 7. When using the default cross-site `workers.dev` and
    `onrender.com` domains, also set:
 
-   ```dotenv
+```dotenv
    COOKIE_SAME_SITE=none
    SESSION_TTL_DAYS=7
-   ```
+```
 
    Production mode already makes the cookie Secure. Browser restrictions on
    third-party cookies can still affect unrelated domains; same-site custom
    frontend and API subdomains are a more robust production arrangement.
-8. Apply
-   `apps/api/src/database/migrations/01_create_auth_tables.sql` once to
+8. Apply both
+   `apps/api/src/database/migrations/01_create_auth_tables.sql` and
+   `apps/api/src/database/migrations/02_create_oauth_accounts.sql` once to
    the production database before testing auth. The current branch does not
    automate production migrations.
-9. Verify `https://<api-service>.onrender.com/api/health`, then test
-   signup from the deployed frontend.
+9. If enabling Google sign-in in production, register a second OAuth
+   redirect URI in the Google Cloud Console pointing at
+   `https://<api-service>.onrender.com/api/auth/oauth/google/callback`,
+   and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and
+   `GOOGLE_REDIRECT_URI` on the Render service to match.
+10. Verify `https://<api-service>.onrender.com/api/health`, then test
+    signup (and Google sign-in, if configured) from the deployed frontend.
 
 `NEXT_PUBLIC_API_URL` is embedded during the frontend build. Changing it
 requires a new Cloudflare build and deployment.
@@ -626,7 +753,8 @@ use an appropriately secured external connection instead.
 | `ECONNREFUSED ...:5432` locally | PostgreSQL is stopped, on another port, or the URL is wrong | Start PostgreSQL and test the same credentials with `psql` |
 | `ECONNREFUSED 127.0.0.1:5432` on Render | Production is using a local placeholder URL | Use the Render PostgreSQL connection URL, not localhost |
 | `relation "users" does not exist` | Health works, but auth migration was not applied | Run `01_create_auth_tables.sql` against the selected DB |
-| `relation "users" already exists` | One-time migration was run twice | Do not rerun it; inspect the existing tables |
+| `relation "oauth_accounts" does not exist` | OAuth migration was not applied | Run `02_create_oauth_accounts.sql` against the selected DB |
+| `relation "..." already exists` | A one-time migration was run twice | Do not rerun it; inspect the existing tables |
 | `Invalid API environment configuration` | Required value is missing or malformed | Check every value in `apps/api/.env` |
 | CORS rejection or `Request origin is not allowed` | `FRONTEND_URL` differs by protocol, host, port, or slash | Use the exact browser origin, normally `http://localhost:3000` |
 | Browser says `Failed to fetch` | API is stopped or frontend points to the wrong origin | Test `/api/health`, correct `NEXT_PUBLIC_API_URL`, and restart Next.js |
@@ -636,6 +764,9 @@ use an appropriately secured external connection instead.
 | Signup returns 409 | The email already exists | Log in or test with another email |
 | Auth returns 429 | Too many signup/login attempts | Wait for the 15-minute rate-limit window |
 | `GET /` on port 5000 returns 404 | The API has no root route | Request `/api/health` |
+| Google sign-in redirects to an error page or fails silently | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, or `GOOGLE_REDIRECT_URI` unset or mismatched | Set all three in `apps/api/.env`; confirm the redirect URI is registered exactly in the Google Cloud Console |
+| `Invalid state parameter` on the OAuth callback | State cookie missing, expired (10-minute limit), or blocked by browser third-party cookie settings | Restart the flow from `/login`; check browser cookie settings |
+| Two `02_*` migration files present in the repo | Duplicate migration accidentally committed | Delete `02_create_oauth_account.sql` (singular); keep `02_create_oauth_accounts.sql` (plural) |
 
 ## 14. Quick-start checklist
 
@@ -645,15 +776,19 @@ Use this list after reading the explanations:
 - [ ] Run `pnpm install` from the repository root.
 - [ ] Create the `e_hailing_safety` database.
 - [ ] Apply `01_create_auth_tables.sql` once.
+- [ ] Apply `02_create_oauth_accounts.sql` once.
 - [ ] Copy and edit `apps/api/.env`.
 - [ ] Copy `apps/web/.env.local`.
+- [ ] (Optional) Add Google OAuth credentials to `apps/api/.env` — see Section 6a.
 - [ ] Start PostgreSQL.
 - [ ] Run `pnpm dev:api` in terminal 1.
 - [ ] Verify `http://localhost:5000/api/health`.
 - [ ] Run `pnpm dev:web` in terminal 2.
 - [ ] Open `http://localhost:3000/signup`.
 - [ ] Create an account and confirm the dashboard redirect.
+- [ ] (Optional) Test the Google sign-in button.
 - [ ] Run the API build, frontend build, and frontend lint checks.
 
 At that point, the monorepo, PostgreSQL database, Express API, frontend API
-origin, CORS policy, and browser session cookie are connected locally.
+origin, CORS policy, browser session cookie, and Google OAuth (if configured)
+are connected locally.

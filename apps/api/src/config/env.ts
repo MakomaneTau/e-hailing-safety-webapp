@@ -15,6 +15,12 @@ const envSchema = z
     SESSION_TTL_DAYS: z.coerce.number().int().positive().max(30).default(7),
 
     COOKIE_SAME_SITE: z.enum(["lax", "none"]).default("lax"),
+
+    GOOGLE_CLIENT_ID: z.string().optional(),
+
+    GOOGLE_CLIENT_SECRET: z.string().optional(),
+
+    GOOGLE_REDIRECT_URI: z.string().optional(),
   })
   .superRefine((values, context) => {
     if (

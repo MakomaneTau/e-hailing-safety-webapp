@@ -9,11 +9,10 @@ import {
   logoutController,
   meController,
   signupController,
+  googleStartController,
+  googleCallbackController,
 } from "./auth.controller";
-import {
-  loginSchema,
-  signupSchema,
-} from "./auth.schema";
+import { loginSchema, signupSchema } from "./auth.schema";
 
 export const authRouter = Router();
 
@@ -42,20 +41,12 @@ authRouter.post(
   loginController,
 );
 
-authRouter.post(
-  "/logout",
-  authenticate,
-  logoutController,
-);
+authRouter.post("/logout", authenticate, logoutController);
 
-authRouter.post(
-  "/logout-all",
-  authenticate,
-  logoutAllController,
-);
+authRouter.post("/logout-all", authenticate, logoutAllController);
 
-authRouter.get(
-  "/me",
-  authenticate,
-  meController,
-);
+authRouter.get("/me", authenticate, meController);
+
+authRouter.get("/oauth/google/start", googleStartController);
+
+authRouter.get("/oauth/google/callback", googleCallbackController);
