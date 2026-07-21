@@ -1,6 +1,22 @@
+'use client";';
+
+import { useRouter } from "next/navigation";
 import { IoExitOutline } from "react-icons/io5";
+import { logout } from "../lib/auth/api";
 
 export default function Navbar() {
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (error) {
+      console.error("Logout failed:", error);
+    } finally {
+      router.replace("/login");
+    }
+  };
+
   return (
     <nav className="w-full mt-4 mx-5 flex items-center justify-between text-gray-400">
       <div className="text-left font-bold text-2xl text-gray-400">
@@ -40,12 +56,14 @@ export default function Navbar() {
           </a>
         </li>
         <li>
-          <a
-            href="/logout"
+          <button
+            type="button"
+            onClick={handleLogout}
+            aria-label="Logout"
             className="inline-flex h-10 w-10 items-center justify-center rounded-full text-red-600 transition-colors hover:bg-red-600 hover:text-white"
           >
             <IoExitOutline className="text-2xl" />
-          </a>
+          </button>
         </li>
       </ul>
     </nav>
