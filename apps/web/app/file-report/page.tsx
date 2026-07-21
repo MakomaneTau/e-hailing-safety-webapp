@@ -1,3 +1,7 @@
+'use client';
+
+import { useRouter } from "next/navigation";
+
 import Card from "../components/file_report_card";
 import Navbar from "../components/navbar";
 
